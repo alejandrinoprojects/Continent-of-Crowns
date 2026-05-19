@@ -50,15 +50,18 @@ public class Shader {
     }
 
     public void setUniform(String name, float value) {
-        glUniform1f(glGetUniformLocation(programId, name), value);
+        int location = glGetUniformLocation(programId, name);
+        glUniform1f(location, value);
     }
 
     public void setUniform(String name, int value) {
-        glUniform1i(glGetUniformLocation(programId, name), value);
+        int location = glGetUniformLocation(programId, name);
+        glUniform1i(location, value);
     }
 
     public void setUniform(String name, float r, float g, float b, float a) {
-        glUniform4f(glGetUniformLocation(programId, name), r, g, b, a);
+        int location = glGetUniformLocation(programId, name);
+        glUniform4f(location, r, g, b, a);
     }
 
     public void dispose() {

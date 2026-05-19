@@ -1,6 +1,8 @@
 import org.joml.Matrix4f;
-import java.nio.ByteBuffer;
 import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL20.*;
+import static org.lwjgl.opengl.GL30.*;
+import java.nio.FloatBuffer;
 import org.lwjgl.system.MemoryUtil;
 
 public class UIRenderer implements Renderer {
@@ -8,21 +10,80 @@ public class UIRenderer implements Renderer {
     private int height = 1080;
     
     private int minimapTextureId = -1;
+    private int vaoId = -1;
+    private int vboId = -1;
+    private Shader uiShader;
     
+    private Matrix4f orthoProjection = new Matrix4f();
+
     public void setResolution(int w, int h) {
         this.width = w;
         this.height = h;
+        orthoProjection.setOrtho2D(0, width, height, 0);
     }
 
     @Override
     public void init() {
+        // Initialize UI shader
+        String vertexSource = "#version 330 core\n" +
+            "layout(location = 0) in vec3 aPos;\n" +
+            "layout(location = 1) in vec2 aTexCoord;\n" +
+            "uniform mat4 projection;\n" +
+            "out vec2 vTexCoord;\n" +
+            "void main() {\n" +
+            "    vTexCoord = aTexCoord;\n" +
+            "    gl_Position = projection * vec4(aPos, 1.0);\n" +
+            "}\n";
+        
+        String fragmentSource = "#version 330 core\n" +
+            "in vec2 vTexCoord;\n" +
+            "uniform sampler2D texture0;\n" +
+            "uniform vec4 colorTint;\n" +
+            "out vec4 fragColor;\n" +
+            "void main() {\n" +
+            "    vec4 texColor = texture(texture0, vTexCoord);\n" +
+            "    fragColor = texColor * colorTint;\n" +
+            "}\n";
+        
+        uiShader = new Shader(vertexSource, fragmentSource);
+        
+        // Create VAO/VBO for UI quads
+        vaoId = glGenVertexArrays();
+        glBindVertexArray(vaoId);
+        
+        vboId = glGenBuffers();
+        glBindBuffer(GL_ARRAY_BUFFER, vboId);
+        
+        float[] vertices = new float[] {
+            // pos               // texcoord
+            -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
+             0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+             0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
+            -0.5f,  0.5f, 0.0f,  0.0f, 1.0f
+        };
+        
+        FloatBuffer buffer = MemoryUtil.memAllocFloat(vertices.length);
+        buffer.put(vertices);
+        buffer.flip();
+        glBufferData(GL_ARRAY_BUFFER, buffer, GL_STATIC_DRAW);
+        MemoryUtil.memFree(buffer);
+        
+        glVertexAttribPointer(0, 3, GL_FLOAT, false, 5 * Float.BYTES, 0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, false, 5 * Float.BYTES, 3L * Float.BYTES);
+        glEnableVertexAttribArray(1);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+        
         generateMinimapTexture();
+        orthoProjection.setOrtho2D(0, width, height, 0);
     }
-    
+
     private void generateMinimapTexture() {
         int dim = 360;
         ByteBuffer buffer = MemoryUtil.memAlloc(dim * dim * 4);
-        
+
         int minMapX = 0;
         int maxMapX = CoordinateConverter.getMapWidth();
         int minMapY = 0;
@@ -38,7 +99,7 @@ public class UIRenderer implements Renderer {
         for (int i = 0; i < dim * dim; i++) {
             buffer.put((byte) 50).put((byte) 95).put((byte) 210).put((byte) 255);
         }
-        
+
         for (HexTile tile : GridManager.hexes.values()) {
             TileType tt = tile.getTileType();
             if (tt == TileType.WATER) continue;
@@ -75,12 +136,11 @@ public class UIRenderer implements Renderer {
                         case SAVANNAH: r = (byte)185; g = (byte)170; b = 80; break;
                         case TUNDRA:   r = (byte)180; g = (byte)200; b = (byte)215; break;
                         case TAIGA:    r = 70; g = 100; b = 50; break;
-                        default:       r = 100; g = (byte)160; b = 60; break; // GRASSLAND
+                        default:       r = 100; g = (byte)160; b = 60; break;
                     }
                     break;
             }
-            
-            // Draw a small 2x2 brush
+
             for (int dy = 0; dy < 2; dy++) {
                 for (int dx = 0; dx < 2; dx++) {
                     int px = mx + dx;
@@ -95,7 +155,7 @@ public class UIRenderer implements Renderer {
                 }
             }
         }
-        
+
         buffer.flip();
 
         minimapTextureId = glGenTextures();
@@ -104,87 +164,94 @@ public class UIRenderer implements Renderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, dim, dim, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
         glBindTexture(GL_TEXTURE_2D, 0);
-        
+
         MemoryUtil.memFree(buffer);
     }
 
     @Override
     public void render(Matrix4f projection, Matrix4f view) {
-        // We ignore the view and projection matrix for UI, we just use orthographic projection
-        glMatrixMode(GL_PROJECTION);
-        glPushMatrix();
-        glLoadIdentity();
-        // Set orthographic 2D projection
-        glOrtho(0, width, height, 0, -1, 1);
-        
-        glMatrixMode(GL_MODELVIEW);
-        glPushMatrix();
-        glLoadIdentity();
-        
-        // Disable depth test to draw over terrain
         glDisable(GL_DEPTH_TEST);
-        // Enable blending for transparency
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        uiShader.bind();
+        uiShader.setUniform("projection", orthoProjection);
         
         // Draw HUD base
         int hudHeight = 200;
         int hudY = height - hudHeight;
-        
-        glColor4f(0.1f, 0.1f, 0.1f, 0.9f);
-        glBegin(GL_QUADS);
-        glVertex2f(0, hudY);
-        glVertex2f(width, hudY);
-        glVertex2f(width, height);
-        glVertex2f(0, height);
-        glEnd();
-        
-        // Draw Minimap
+        drawQuad(0, hudY, width, height, 0.1f, 0.1f, 0.1f, 0.9f, null);
+
+        // Draw Minimap background
         int minimapDim = 180;
         int minimapX = 20;
         int minimapY = height - minimapDim - 10;
-        
-        glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
-        glBegin(GL_QUADS);
-        glVertex2f(minimapX - 5, minimapY - 5);
-        glVertex2f(minimapX + minimapDim + 5, minimapY - 5);
-        glVertex2f(minimapX + minimapDim + 5, minimapY + minimapDim + 5);
-        glVertex2f(minimapX - 5, minimapY + minimapDim + 5);
-        glEnd();
-        
+        drawQuad(minimapX - 5, minimapY - 5, minimapX + minimapDim + 5, minimapY + minimapDim + 5, 
+                 0.3f, 0.3f, 0.3f, 1.0f, null);
+
+        // Draw Minimap texture
         if (minimapTextureId != -1) {
-            glEnable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, minimapTextureId);
-            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-            glBegin(GL_QUADS);
-            glTexCoord2f(0, 0); glVertex2f(minimapX, minimapY);
-            glTexCoord2f(1, 0); glVertex2f(minimapX + minimapDim, minimapY);
-            glTexCoord2f(1, 1); glVertex2f(minimapX + minimapDim, minimapY + minimapDim);
-            glTexCoord2f(0, 1); glVertex2f(minimapX, minimapY + minimapDim);
-            glEnd();
-            glBindTexture(GL_TEXTURE_2D, 0);
-            glDisable(GL_TEXTURE_2D);
+            drawTexturedQuad(minimapX, minimapY, minimapX + minimapDim, minimapY + minimapDim, minimapTextureId);
         }
-        
-        // Command Card Area (Right side)
+
+        // Command Card Area
         int cmdWidth = 230;
         int cmdHeight = 180;
         int cmdX = width - cmdWidth - 10;
         int cmdY = hudY + 10;
-        
-        glColor4f(0.2f, 0.2f, 0.2f, 1.0f);
-        glBegin(GL_QUADS);
-        glVertex2f(cmdX, cmdY);
-        glVertex2f(cmdX + cmdWidth, cmdY);
-        glVertex2f(cmdX + cmdWidth, cmdY + cmdHeight);
-        glVertex2f(cmdX, cmdY + cmdHeight);
-        glEnd();
+        drawQuad(cmdX, cmdY, cmdX + cmdWidth, cmdY + cmdHeight, 0.2f, 0.2f, 0.2f, 1.0f, null);
 
         glDisable(GL_BLEND);
+        uiShader.unbind();
+    }
+    
+    private void drawQuad(float x1, float y1, float x2, float y2, float r, float g, float b, float a, Integer textureId) {
+        float centerX = (x1 + x2) / 2.0f;
+        float centerY = (y1 + y2) / 2.0f;
+        float halfW = (x2 - x1) / 2.0f;
+        float halfH = (y2 - y1) / 2.0f;
         
-        glMatrixMode(GL_PROJECTION);
-        glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);
-        glPopMatrix();
+        uiShader.setUniform("colorTint", r, g, b, a);
+        
+        if (textureId != null) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, textureId);
+            uiShader.setUniform("texture0", 0);
+        } else {
+            uiShader.setUniform("texture0", -1);
+        }
+        
+        Matrix4f model = new Matrix4f().translate(centerX, centerY, 0).scale(halfW, halfH, 1);
+        uiShader.setUniform("model", model);
+        
+        glBindVertexArray(vaoId);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        glBindVertexArray(0);
+        
+        if (textureId != null) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    }
+    
+    private void drawTexturedQuad(float x1, float y1, float x2, float y2, int textureId) {
+        drawQuad(x1, y1, x2, y2, 1.0f, 1.0f, 1.0f, 1.0f, textureId);
+    }
+    
+    public void dispose() {
+        if (vaoId != -1) {
+            glDeleteVertexArrays(vaoId);
+            vaoId = -1;
+        }
+        if (vboId != -1) {
+            glDeleteBuffers(vboId);
+            vboId = -1;
+        }
+        if (minimapTextureId != -1) {
+            glDeleteTextures(minimapTextureId);
+            minimapTextureId = -1;
+        }
+        if (uiShader != null) {
+            uiShader.dispose();
+        }
     }
 }

@@ -17,40 +17,47 @@ public class EntityRenderer implements Renderer {
 
     @Override
     public void init() {
-        String vertexSource = "#version 120\n" +
+        String vertexSource = "#version 330 core\n" +
+            "layout(location = 0) in vec3 aPos;\n" +
+            "layout(location = 1) in vec2 aTexCoord;\n" +
             "uniform mat4 projection;\n" +
             "uniform mat4 view;\n" +
             "uniform mat4 model;\n" +
+            "out vec2 vTexCoord;\n" +
             "void main() {\n" +
-            "    gl_TexCoord[0] = gl_MultiTexCoord0;\n" +
-            "    gl_Position = projection * view * model * gl_Vertex;\n" +
+            "    vTexCoord = aTexCoord;\n" +
+            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n" +
             "}\n";
 
-        String fragmentSource = "#version 120\n" +
+        String fragmentSource = "#version 330 core\n" +
+            "in vec2 vTexCoord;\n" +
             "uniform sampler2D texture0;\n" +
             "uniform vec4 colorTint;\n" +
+            "out vec4 fragColor;\n" +
             "void main() {\n" +
-            "    vec4 texColor = texture2D(texture0, gl_TexCoord[0].st);\n" +
-            "    gl_FragColor = texColor * colorTint;\n" +
+            "    vec4 texColor = texture(texture0, vTexCoord);\n" +
+            "    fragColor = texColor * colorTint;\n" +
             "}\n";
 
         entityShader = new Shader(vertexSource, fragmentSource);
-        
+
         byte[] whitePixel = new byte[] { (byte)255, (byte)255, (byte)255, (byte)255 };
         whiteTexture = new Texture(1, 1, whitePixel);
+        
+        quadRenderer.init();
     }
 
     @Override
     public void render(Matrix4f projection, Matrix4f view) {
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LEQUAL); // Ensure closer things cover further things
-        
+        glDepthFunc(GL_LEQUAL);
+
         // Render TownHalls
         if (worldState.playerTownHall != null) {
-            renderTownHall(worldState.playerTownHall, projection, view, 0.1f, 0.5f, 0.2f, 1.0f); // Green
+            renderTownHall(worldState.playerTownHall, projection, view, 0.1f, 0.5f, 0.2f, 1.0f);
         }
         if (worldState.enemyTownHall != null) {
-            renderTownHall(worldState.enemyTownHall, projection, view, 0.8f, 0.1f, 0.1f, 1.0f); // Red
+            renderTownHall(worldState.enemyTownHall, projection, view, 0.8f, 0.1f, 0.1f, 1.0f);
         }
 
         // Render Units
@@ -66,16 +73,16 @@ public class EntityRenderer implements Renderer {
             float b = isPlayer ? 0.8f : 0.2f;
 
             if (u.selected) {
-                r = 1.0f; g = 1.0f; b = 0.0f; // Yellow
+                r = 1.0f; g = 1.0f; b = 0.0f;
             } else if (u.isHoldingPosition) {
-                r = 1.0f; g = 0.5f; b = 0.0f; // Orange
+                r = 1.0f; g = 0.5f; b = 0.0f;
             }
 
             HexTile tile = GridManager.hexes.get(GridManager.packKey(u.q, u.r));
             float terrainZ = (tile != null) ? tile.getZ() : 0;
             float renderY = (float)u.y - terrainZ - (float)u.leapZ;
-            
-            float depthZ = renderY * 0.001f; // depth based on Y screen coordinate
+
+            float depthZ = renderY * 0.001f;
 
             model.identity()
                 .translate((float)u.x, renderY, depthZ)
@@ -85,16 +92,16 @@ public class EntityRenderer implements Renderer {
             entityShader.setUniform("colorTint", r, g, b, 1.0f);
             quadRenderer.render(entityShader, whiteTexture, projection, view, model);
         }
-        
+
         glDisable(GL_DEPTH_TEST);
     }
-    
+
     private void renderTownHall(TownHall th, Matrix4f projection, Matrix4f view, float r, float g, float b, float a) {
         int px = CoordinateConverter.getPixelX(th.q, th.r);
         int py = CoordinateConverter.getPixelY(th.q, th.r);
         HexTile tile = GridManager.hexes.get(GridManager.packKey(th.q, th.r));
         float terrainZ = (tile != null) ? tile.getZ() : 0;
-        
+
         float renderY = py - terrainZ;
         float depthZ = renderY * 0.001f;
 
